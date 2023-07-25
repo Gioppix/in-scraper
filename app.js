@@ -1,9 +1,13 @@
 import puppeteer from "puppeteer";
-
 import fs from "fs";
 import csv from "csv-parser";
+import { Configuration, OpenAIApi } from "openai";
+import pLimit from "p-limit";
 
-// Define the module function
+const configuration = new Configuration({
+  apiKey: "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",
+});
+const openai = new OpenAIApi(configuration);
 
 let links = await new Promise((resolve, reject) => {
   const results = [];
@@ -17,11 +21,9 @@ let links = await new Promise((resolve, reject) => {
       reject(error);
     });
 });
+
 links = links.map((l) => "https://" + l);
 console.log(links);
-
-for (let link of links) {
-}
 
 async function readJsonFile(filePath) {
   try {
@@ -33,21 +35,77 @@ async function readJsonFile(filePath) {
   }
 }
 
-const browser = await puppeteer.launch({ headless: "new" });
-const page = await browser.newPage();
+const browser = await puppeteer.connect({
+  browserWSEndpoint:
+    "ws://127.0.0.1:9222/devtools/browser/8188abdd-531a-4bd2-8f6b-1c74c2f9209f",
+});
 
-// Set the cookie
+const finalmente = new Map();
+const limit = pLimit(5); // This line is new
+const promises = [];
 
-await page.setCookie(...(await readJsonFile("www.linkedin.com.cookies.json")));
-console.log();
 for (let link of links) {
-  try {
-    // Go to the link and wait for networkidle0, which waits until there are no network connections for at least 500 ms
-    await page.goto(link, { waitUntil: "networkidle0", timeout: 60000 });
-    const title = await page.$eval("title", (element) => element.textContent);
-    console.log(`Title: ${title}`);
-  } catch (error) {
-    console.error(`Failed to fetch page ${link}: ${error}`);
-  }
+  promises.push(
+    limit(() =>
+      (async () => {
+        try {
+          // This line is changed
+          const newLink = link;
+          const page = await browser.newPage();
+          await page.goto(newLink, {});
+
+          const data = await Promise.all([
+            page
+              .waitForSelector(".text-body-medium.break-words")
+              .then(() =>
+                page.$eval(
+                  ".text-body-medium.break-words",
+                  (e) => e.textContent
+                )
+              ),
+
+            page
+              .waitForSelector(
+                "* > div.display-flex.ph5.pv3 > div > div > div > span:nth-child(1)"
+              )
+              .then(() =>
+                page.$eval(
+                  "* > div.display-flex.ph5.pv3 > div > div > div > span:nth-child(1)",
+                  (e) => e.textContent
+                )
+              ),
+          ]);
+
+          await page.close();
+
+          return openai
+            .createChatCompletion({
+              model: "gpt-3.5-turbo",
+              messages: [
+                {
+                  role: "user",
+                  content:
+                    "I want to connect to this person. Make a quick message (max one sentence) given the following linkedin data. Do not greet as i will be doing it. Data: " +
+                    data.toString(),
+                },
+              ],
+            })
+            .then((chat_completion) => {
+              finalmente.set(
+                newLink,
+                chat_completion.data.choices[0].message.content
+              );
+              console.log("ciao");
+            });
+        } catch (e) {
+          console.log(e);
+        }
+      })()
+    )
+  );
 }
-await browser.close();
+
+await Promise.all(promises);
+console.log(finalmente);
+
+process.exit();
