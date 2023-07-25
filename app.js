@@ -5,7 +5,7 @@ import { Configuration, OpenAIApi } from "openai";
 import pLimit from "p-limit";
 
 const configuration = new Configuration({
-  apiKey: "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",
+  apiKey: "TOKEN HERE",
 });
 const openai = new OpenAIApi(configuration);
 
